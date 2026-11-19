@@ -1,9 +1,16 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
-import json, sqlite3, uuid, os, threading, hashlib, secrets, hmac
+from email.message import EmailMessage
+import json, sqlite3, uuid, os, threading, hashlib, secrets, hmac, smtplib
 
 ROOT=Path(__file__).parent.resolve()
+env_file=ROOT/'.env'
+if env_file.is_file():
+ for raw in env_file.read_text(encoding='utf-8').splitlines():
+  line=raw.strip()
+  if line and not line.startswith('#') and '=' in line:
+   key,value=line.split('=',1);os.environ.setdefault(key.strip(),value.strip().strip('"').strip("'"))
 DEFAULT_DB_DIR=Path('/app') if os.environ.get('SHARD_CLOUD') or Path('/app').is_dir() else ROOT
 DB=Path(os.environ.get('NEXOFLOW_DB',DEFAULT_DB_DIR/'nexoflow.sqlite3')); DB.parent.mkdir(parents=True,exist_ok=True); lock=threading.Lock()
 def db():
@@ -17,16 +24,14 @@ def open_tenant_db(path):
  c.execute("INSERT OR IGNORE INTO locations(id,name) VALUES('loc-main','Loja principal'),('loc-north','Filial 2')");c.isolation_level=None;return c
 def init():
  with db() as c:
-  c.executescript('''CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,sku TEXT UNIQUE NOT NULL,name TEXT NOT NULL,category TEXT DEFAULT '',price REAL NOT NULL DEFAULT 0,cost REAL NOT NULL DEFAULT 0,stock REAL NOT NULL DEFAULT 0,min_stock REAL NOT NULL DEFAULT 0,barcode TEXT DEFAULT '',variant TEXT DEFAULT '',lot TEXT DEFAULT '',expiry_date TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT DEFAULT '',phone TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sales(id TEXT PRIMARY KEY,number INTEGER UNIQUE NOT NULL,customer TEXT DEFAULT '',channel TEXT DEFAULT 'PDV',total REAL NOT NULL,status TEXT DEFAULT 'paid',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sale_items(id TEXT PRIMARY KEY,sale_id TEXT NOT NULL REFERENCES sales(id),product_id TEXT REFERENCES products(id),description TEXT NOT NULL,quantity REAL NOT NULL,unit_price REAL NOT NULL); CREATE TABLE IF NOT EXISTS movements(id TEXT PRIMARY KEY,product_id TEXT NOT NULL REFERENCES products(id),kind TEXT NOT NULL,quantity REAL NOT NULL,note TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS finance(id TEXT PRIMARY KEY,description TEXT NOT NULL,kind TEXT NOT NULL,due_date TEXT DEFAULT '',category TEXT DEFAULT '',amount REAL NOT NULL,status TEXT DEFAULT 'open',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS xml_imports(id TEXT PRIMARY KEY,filename TEXT NOT NULL,supplier TEXT DEFAULT '',invoice_number TEXT DEFAULT '',total REAL DEFAULT 0,payload TEXT NOT NULL,status TEXT DEFAULT 'review',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,status TEXT DEFAULT 'open',payload TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS locations(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL); CREATE TABLE IF NOT EXISTS product_locations(product_id TEXT NOT NULL REFERENCES products(id),location_id TEXT NOT NULL REFERENCES locations(id),quantity REAL NOT NULL DEFAULT 0,PRIMARY KEY(product_id,location_id)); CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Operador',status TEXT NOT NULL DEFAULT 'Ativo',last_access TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS access_logs(id TEXT PRIMARY KEY,user_id TEXT,email TEXT NOT NULL,event TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at TEXT NOT NULL);''')
-  c.executescript('''CREATE TABLE IF NOT EXISTS tenants(id TEXT PRIMARY KEY,name TEXT NOT NULL,owner_email TEXT DEFAULT '',plan TEXT NOT NULL DEFAULT 'pro',status TEXT NOT NULL DEFAULT 'Ativo',db_file TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS plans(code TEXT PRIMARY KEY,name TEXT NOT NULL,price REAL NOT NULL,description TEXT NOT NULL,features TEXT NOT NULL,highlighted INTEGER NOT NULL DEFAULT 0);''')
+  c.executescript('''CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,sku TEXT UNIQUE NOT NULL,name TEXT NOT NULL,category TEXT DEFAULT '',price REAL NOT NULL DEFAULT 0,cost REAL NOT NULL DEFAULT 0,stock REAL NOT NULL DEFAULT 0,min_stock REAL NOT NULL DEFAULT 0,barcode TEXT DEFAULT '',variant TEXT DEFAULT '',lot TEXT DEFAULT '',expiry_date TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT DEFAULT '',phone TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sales(id TEXT PRIMARY KEY,number INTEGER UNIQUE NOT NULL,customer TEXT DEFAULT '',channel TEXT DEFAULT 'PDV',total REAL NOT NULL,status TEXT DEFAULT 'paid',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sale_items(id TEXT PRIMARY KEY,sale_id TEXT NOT NULL REFERENCES sales(id),product_id TEXT REFERENCES products(id),description TEXT NOT NULL,quantity REAL NOT NULL,unit_price REAL NOT NULL); CREATE TABLE IF NOT EXISTS movements(id TEXT PRIMARY KEY,product_id TEXT NOT NULL REFERENCES products(id),kind TEXT NOT NULL,quantity REAL NOT NULL,note TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS finance(id TEXT PRIMARY KEY,description TEXT NOT NULL,kind TEXT NOT NULL,due_date TEXT DEFAULT '',category TEXT DEFAULT '',amount REAL NOT NULL,status TEXT DEFAULT 'open',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS xml_imports(id TEXT PRIMARY KEY,filename TEXT NOT NULL,supplier TEXT DEFAULT '',invoice_number TEXT DEFAULT '',total REAL DEFAULT 0,payload TEXT NOT NULL,status TEXT DEFAULT 'review',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,status TEXT DEFAULT 'open',payload TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS locations(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL); CREATE TABLE IF NOT EXISTS product_locations(product_id TEXT NOT NULL REFERENCES products(id),location_id TEXT NOT NULL REFERENCES locations(id),quantity REAL NOT NULL DEFAULT 0,PRIMARY KEY(product_id,location_id)); CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Operador',status TEXT NOT NULL DEFAULT 'Ativo',last_access TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS access_logs(id TEXT PRIMARY KEY,user_id TEXT,email TEXT NOT NULL,event TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS password_reset_tokens(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at TEXT NOT NULL,used_at TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);''')
+  c.executescript('''CREATE TABLE IF NOT EXISTS tenants(id TEXT PRIMARY KEY,name TEXT NOT NULL,owner_email TEXT DEFAULT '',plan TEXT NOT NULL DEFAULT 'pro',status TEXT NOT NULL DEFAULT 'Ativo',db_file TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS plans(code TEXT PRIMARY KEY,name TEXT NOT NULL,price REAL NOT NULL,description TEXT NOT NULL,features TEXT NOT NULL,highlighted INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS login_attempts(id TEXT PRIMARY KEY,email TEXT NOT NULL,ip TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);''')
   user_columns={row['name'] for row in c.execute('PRAGMA table_info(users)').fetchall()}
   if 'tenant_id' not in user_columns:c.execute('ALTER TABLE users ADD COLUMN tenant_id TEXT')
-  c.execute("INSERT OR IGNORE INTO tenants(id,name,plan,status,db_file) VALUES('tenant-main','Vértice Comércio','pro','Ativo',?)",(DB.name,))
+  c.execute("INSERT OR IGNORE INTO tenants(id,name,plan,status,db_file) VALUES('tenant-main','NexoFlow Plataforma','pro','Ativo',?)",(DB.name,))
   defaults=[('start','Essencial',79,'Para começar a organizar a operação.',json.dumps(['Vendas e PDV','Estoque e produtos','Financeiro essencial'],ensure_ascii=False),0),('pro','Pro',149,'Mais controle para uma equipe em crescimento.',json.dumps(['Tudo do Essencial','XML e compras','Relatórios e serviços'],ensure_ascii=False),1),('multi','Multiunidade',299,'Gestão integrada para várias lojas.',json.dumps(['Tudo do Pro','Múltiplas unidades','Acessos e indicadores avançados'],ensure_ascii=False),0)]
   for plan in defaults:c.execute('INSERT OR IGNORE INTO plans(code,name,price,description,features,highlighted) VALUES(?,?,?,?,?,?)',plan)
   c.execute("UPDATE users SET tenant_id='tenant-main' WHERE tenant_id IS NULL")
-  legacy=c.execute("SELECT id FROM users WHERE role IN ('Administrador','Administradora') ORDER BY created_at LIMIT 1").fetchone()
-  if legacy and not c.execute("SELECT 1 FROM users WHERE role='Superadmin'").fetchone():c.execute("UPDATE users SET role='Superadmin' WHERE id=?",(legacy['id'],))
   admin_email=os.environ.get('NEXOFLOW_SUPERADMIN_EMAIL','').strip().lower();admin_password=os.environ.get('NEXOFLOW_SUPERADMIN_PASSWORD','')
   if admin_email and admin_password and len(admin_password)>=8:
    superadmin=c.execute("SELECT id,email FROM users WHERE role='Superadmin' ORDER BY created_at LIMIT 1").fetchone()
@@ -37,10 +42,27 @@ def init():
   existing={row['name'] for row in c.execute('PRAGMA table_info(products)').fetchall()}
   for column,definition in [('barcode',"TEXT DEFAULT ''"),('variant',"TEXT DEFAULT ''"),('lot',"TEXT DEFAULT ''"),('expiry_date',"TEXT DEFAULT ''")]:
    if column not in existing:c.execute(f'ALTER TABLE products ADD COLUMN {column} {definition}')
-  if c.execute('SELECT COUNT(*) FROM products').fetchone()[0]==0:
-   for p in [('FON-2041','Fone Bluetooth Wave Pro','Eletrônicos',249.9,130,34,8),('GAR-1180','Garrafa Térmica Inox 750ml','Acessórios',89.9,42,4,8),('MOC-0902','Mochila Urbana Compact','Bolsas',179,88,21,5)]: c.execute('INSERT INTO products(id,sku,name,category,price,cost,stock,min_stock) VALUES(?,?,?,?,?,?,?,?)',(str(uuid.uuid4()),*p))
   c.execute("INSERT OR IGNORE INTO locations(id,name) VALUES('loc-main','Loja Centro'),('loc-north','Filial Norte')")
   for row in c.execute('SELECT id,stock FROM products').fetchall(): c.execute("INSERT OR IGNORE INTO product_locations(product_id,location_id,quantity) VALUES(?,?,?)",(row['id'],'loc-main',row['stock']))
+def send_reset_email(target, token):
+ host=os.environ.get('SMTP_HOST','').strip(); sender=os.environ.get('SMTP_FROM','').strip(); password=os.environ.get('SMTP_PASSWORD','')
+ if not host or not sender or not password:return False
+ port=int(os.environ.get('SMTP_PORT','587')); username=os.environ.get('SMTP_USER','').strip(); base=os.environ.get('NEXOFLOW_PUBLIC_URL','').rstrip('/')
+ if not base.startswith('https://'):return False
+ link=f"{base}/login.html?mode=reset&token={token}"
+ message=EmailMessage();message['Subject']='Redefina sua senha do NexoFlow';message['From']=sender;message['To']=target
+ message.set_content(f"Recebemos um pedido para redefinir sua senha. O link expira em 30 minutos: {link}\n\nSe você não pediu, ignore este e-mail.")
+ if port==465:
+  with smtplib.SMTP_SSL(host,port,timeout=15) as mail:
+   if username:mail.login(username,password)
+   mail.send_message(message)
+ else:
+  with smtplib.SMTP(host,port,timeout=15) as mail:
+   mail.starttls()
+   if username:mail.login(username,password)
+   mail.send_message(message)
+ return True
+
 class Handler(SimpleHTTPRequestHandler):
  def __init__(self,*a,**kw): super().__init__(*a,directory=str(ROOT),**kw)
  def log_message(self,*a): pass
@@ -79,11 +101,18 @@ class Handler(SimpleHTTPRequestHandler):
   if path=='/api/health':
    with db() as c:
     admin=c.execute("SELECT email FROM users WHERE role='Superadmin' ORDER BY created_at LIMIT 1").fetchone()
-    return self.send_json({'ok':True,'database':'SQLite','app':'NexoFlow','superadmin_configured':bool(admin),'superadmin_email':admin['email'] if admin else None,'database_path':str(DB)})
+    return self.send_json({'ok':True,'database':'SQLite','app':'NexoFlow','superadmin_configured':bool(admin)})
   if path in ('/admin','/admin.html'):
    with db() as c:
     if not self.current_superadmin(c):self.send_response(302);self.send_header('Location','/login.html?next=admin');self.end_headers();return
    self.path='/admin.html';return super().do_GET()
+  if path=='/company-admin.html':
+   with db() as c:
+    actor=self.current_user(c)
+    if not actor or actor['role'] not in ('Administrador','Administradora'):
+     target='/admin.html' if actor and actor['role']=='Superadmin' else '/login.html'
+     self.send_response(302);self.send_header('Location',target);self.end_headers();return
+   return super().do_GET()
   if path.startswith('/api/'):
    with db() as auth:
     has_users=bool(auth.execute('SELECT COUNT(*) FROM users').fetchone()[0]); actor=self.current_user(auth)
@@ -120,7 +149,13 @@ class Handler(SimpleHTTPRequestHandler):
     if path=='/api/operations':
      kind=parse_qs(url.query).get('kind',[''])[0]; rows=c.execute('SELECT * FROM operations WHERE kind=? ORDER BY created_at DESC',(kind,)).fetchall() if kind else c.execute('SELECT * FROM operations ORDER BY created_at DESC').fetchall(); return self.send_json([dict(x) | {'payload':json.loads(x['payload'])} for x in rows])
     if path=='/api/dashboard':
-     return self.send_json({'products':c.execute('SELECT COUNT(*) FROM products').fetchone()[0],'lowStock':c.execute('SELECT COUNT(*) FROM products WHERE stock<=min_stock').fetchone()[0],'sales':c.execute("SELECT COALESCE(SUM(total),0) FROM sales WHERE date(created_at)=date('now','localtime')").fetchone()[0],'orders':c.execute("SELECT COUNT(*) FROM sales WHERE date(created_at)=date('now','localtime')").fetchone()[0],'financeOpen':c.execute("SELECT COALESCE(SUM(amount),0) FROM finance WHERE status='open'").fetchone()[0]})
+     month="date('now','localtime','start of month')"; prev="date('now','localtime','start of month','-1 month')"
+     cur=c.execute(f"SELECT COALESCE(SUM(total),0) revenue,COUNT(*) orders FROM sales WHERE status!='quote' AND date(created_at)>={month}").fetchone()
+     old=c.execute(f"SELECT COALESCE(SUM(total),0) revenue,COUNT(*) orders FROM sales WHERE status!='quote' AND date(created_at)>={prev} AND date(created_at)<{month}").fetchone()
+     daily=c.execute("SELECT date(created_at,'localtime') day,COALESCE(SUM(total),0) revenue,COUNT(*) orders FROM sales WHERE status!='quote' AND date(created_at,'localtime')>=date('now','localtime','-29 days') GROUP BY date(created_at,'localtime') ORDER BY day").fetchall()
+     channels=c.execute("SELECT channel,COUNT(*) orders,COALESCE(SUM(total),0) revenue FROM sales WHERE status!='quote' AND date(created_at,'localtime')>=date('now','localtime','start of month') GROUP BY channel ORDER BY revenue DESC").fetchall()
+     recent=c.execute('SELECT id,number,customer,channel,total,status,created_at FROM sales ORDER BY created_at DESC LIMIT 6').fetchall()
+     return self.send_json({'products':c.execute('SELECT COUNT(*) FROM products').fetchone()[0],'inventoryCost':c.execute('SELECT COALESCE(SUM(cost*stock),0) FROM products').fetchone()[0],'lowStock':c.execute('SELECT COUNT(*) FROM products WHERE stock<=min_stock').fetchone()[0],'lowStockNames':[dict(x) for x in c.execute('SELECT name,stock,min_stock FROM products WHERE stock<=min_stock ORDER BY stock LIMIT 5').fetchall()],'movementsToday':c.execute("SELECT COUNT(*) FROM movements WHERE date(created_at,'localtime')=date('now','localtime')").fetchone()[0],'pendingXml':c.execute("SELECT COUNT(*) FROM xml_imports WHERE status!='processed'").fetchone()[0],'overdueFinance':c.execute("SELECT COUNT(*) FROM finance WHERE status='open' AND due_date!='' AND date(due_date)<date('now','localtime')").fetchone()[0],'dueSoonFinance':c.execute("SELECT COUNT(*) FROM finance WHERE status='open' AND due_date!='' AND date(due_date) BETWEEN date('now','localtime') AND date('now','localtime','+7 days')").fetchone()[0],'salesMonth':cur['revenue'],'ordersMonth':cur['orders'],'salesTodayOrders':c.execute("SELECT COUNT(*) FROM sales WHERE status!='quote' AND date(created_at,'localtime')=date('now','localtime')").fetchone()[0],'quotesOpen':c.execute("SELECT COUNT(*) FROM sales WHERE status='quote'").fetchone()[0],'ticketAverage':cur['revenue']/cur['orders'] if cur['orders'] else 0,'salesPreviousMonth':old['revenue'],'ordersPreviousMonth':old['orders'],'expensesPaidMonth':c.execute("SELECT COALESCE(SUM(amount),0) FROM finance WHERE status='paid' AND kind='pay' AND date(created_at,'localtime')>=date('now','localtime','start of month')").fetchone()[0],'receivableOpen':c.execute("SELECT COALESCE(SUM(amount),0) FROM finance WHERE status='open' AND kind='receive'").fetchone()[0],'payableOpen':c.execute("SELECT COALESCE(SUM(amount),0) FROM finance WHERE status='open' AND kind='pay'").fetchone()[0],'financeOpen':c.execute("SELECT COALESCE(SUM(amount),0) FROM finance WHERE status='open'").fetchone()[0],'daily':[dict(x) for x in daily],'channels':[dict(x) for x in channels],'recent':[dict(x) for x in recent]})
     if path in routes:return self.send_json([dict(x) for x in c.execute(routes[path]).fetchall()])
     if path.startswith('/api/settings/'): 
      row=c.execute('SELECT value FROM settings WHERE key=?',(path.rsplit('/',1)[-1],)).fetchone(); return self.send_json(json.loads(row['value']) if row else {})
@@ -135,6 +170,7 @@ class Handler(SimpleHTTPRequestHandler):
     self.path='/index.html'
    if self.path=='/index.html':
     if actor and actor['role']=='Superadmin':self.path='/admin.html'
+    elif actor and actor['role'] in ('Administrador','Administradora') and parse_qs(url.query).get('area',[''])[0]!='operacao':self.send_response(302);self.send_header('Location','/company-admin.html');self.end_headers();return
   return super().do_GET()
  def do_POST(self):
   path=unquote(urlparse(self.path).path); data=self.read_json()
@@ -166,13 +202,36 @@ class Handler(SimpleHTTPRequestHandler):
      tid=str(uuid.uuid4());uid=str(uuid.uuid4());db_file=f'tenants/{tid}.sqlite3';salt=secrets.token_hex(16);digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt.encode(),240000).hex();c.execute('INSERT INTO tenants(id,name,owner_email,plan,status,db_file) VALUES(?,?,?,?,?,?)',(tid,name,email,plan,'Ativo',db_file));c.execute('INSERT INTO users(id,name,email,password_hash,role,tenant_id) VALUES(?,?,?,?,?,?)',(uid,name,email,f'pbkdf2_sha256${salt}${digest}','Administrador',tid));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),uid,email,'Conta criada pelo superadmin'))
      tenant_conn=open_tenant_db(DB.parent/db_file);tenant_conn.close()
      return self.send_json({'id':tid,'name':name,'email':email,'plan':plan,'status':'Ativo'},201)
+    if path=='/api/auth/forgot-password':
+     email=(data.get('email') or '').strip().lower();user=c.execute("SELECT id,email FROM users WHERE email=? AND status='Ativo'",(email,)).fetchone()
+     public_url=os.environ.get('NEXOFLOW_PUBLIC_URL','').strip()
+     if not os.environ.get('SMTP_HOST') or not os.environ.get('SMTP_FROM') or not os.environ.get('SMTP_PASSWORD') or not public_url.startswith('https://'):
+      return self.send_json({'error':'A recuperação por e-mail ainda não está configurada no servidor.'},503)
+     if user:
+      recent=c.execute("SELECT COUNT(*) FROM password_reset_tokens WHERE user_id=? AND created_at>=datetime('now','-15 minutes')",(user['id'],)).fetchone()[0]
+      if recent<3:
+       token=secrets.token_urlsafe(32);digest=hashlib.sha256(token.encode()).hexdigest();c.execute("INSERT INTO password_reset_tokens(token_hash,user_id,expires_at) VALUES(?,?,datetime('now','+30 minutes'))",(digest,user['id']))
+       try:send_reset_email(email,token)
+       except Exception:c.execute('DELETE FROM password_reset_tokens WHERE token_hash=?',(digest,));return self.send_json({'error':'Não foi possível enviar o e-mail. Confira a configuração SMTP.'},503)
+     return self.send_json({'ok':True,'message':'Se o endereço estiver cadastrado, enviaremos um link para redefinir a senha.'},202)
+    if path=='/api/auth/reset-password':
+     token=(data.get('token') or '').strip();password=data.get('password') or ''
+     if len(password)<8:return self.send_json({'error':'Use uma senha com pelo menos 8 caracteres.'},400)
+     digest=hashlib.sha256(token.encode()).hexdigest();reset=c.execute("SELECT user_id FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>CURRENT_TIMESTAMP",(digest,)).fetchone()
+     if not reset:return self.send_json({'error':'Este link expirou ou já foi usado. Peça outro link.'},400)
+     salt=secrets.token_hex(16);password_hash=hashlib.pbkdf2_hmac('sha256',password.encode(),salt.encode(),240000).hex();c.execute('UPDATE users SET password_hash=? WHERE id=?',(f'pbkdf2_sha256${salt}${password_hash}',reset['user_id']));c.execute('UPDATE password_reset_tokens SET used_at=CURRENT_TIMESTAMP WHERE token_hash=?',(digest,));c.execute('DELETE FROM sessions WHERE user_id=?',(reset['user_id'],))
+     return self.send_json({'ok':True,'message':'Senha redefinida. Entre com sua nova senha.'})
     if path=='/api/auth/login':
      email=(data.get('email') or '').strip().lower(); password=data.get('password') or ''; user=c.execute('SELECT * FROM users WHERE email=?',(email,)).fetchone()
-     if not user or user['status']!='Ativo':return self.send_json({'error':'Acesso não encontrado ou suspenso.'},401)
+     ip=self.client_address[0] if self.client_address else 'unknown';c.execute("DELETE FROM login_attempts WHERE created_at<datetime('now','-1 day')")
+     attempts=c.execute("SELECT COUNT(*) FROM login_attempts WHERE email=? AND ip=? AND created_at>=datetime('now','-15 minutes')",(email,ip)).fetchone()[0]
+     if attempts>=5:return self.send_json({'error':'Muitas tentativas. Aguarde 15 minutos e tente novamente.'},429)
+     if not user or user['status']!='Ativo':c.execute('INSERT INTO login_attempts(id,email,ip) VALUES(?,?,?)',(str(uuid.uuid4()),email,ip));return self.send_json({'error':'E-mail ou senha incorretos.'},401)
      try:_,salt,expected=user['password_hash'].split('$',2)
      except ValueError:return self.send_json({'error':'Credencial inválida.'},401)
      actual=hashlib.pbkdf2_hmac('sha256',password.encode(),salt.encode(),240000).hex()
-     if not hmac.compare_digest(actual,expected):return self.send_json({'error':'E-mail ou senha incorretos.'},401)
+     if not hmac.compare_digest(actual,expected):c.execute('INSERT INTO login_attempts(id,email,ip) VALUES(?,?,?)',(str(uuid.uuid4()),email,ip));return self.send_json({'error':'E-mail ou senha incorretos.'},401)
+     c.execute('DELETE FROM login_attempts WHERE email=? AND ip=?',(email,ip))
      token=secrets.token_urlsafe(32);c.execute("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,datetime('now','+12 hours'))",(token,user['id']));c.execute("UPDATE users SET last_access=CURRENT_TIMESTAMP WHERE id=?",(user['id'],));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),user['id'],email,'Login realizado'))
      return self.send_json({'ok':True,'user':{'name':user['name'],'email':email,'role':user['role'],'company':c.execute('SELECT name FROM tenants WHERE id=?',(user['tenant_id'],)).fetchone()['name'] if user['tenant_id'] else ''}},cookie=f'nf_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200')
     if path=='/api/users':
@@ -225,7 +284,7 @@ class Handler(SimpleHTTPRequestHandler):
        if data.get('status')!='quote' and product['stock']<qty:return self.send_json({'error':f"Estoque insuficiente para {product['name']} (disponível: {product['stock']:g})."},409)
        price=float(item.get('unit_price') if item.get('unit_price') is not None else product['price']); normalized.append((product,qty,price)); total+=qty*price
       else:return self.send_json({'error':'Produto não encontrado no catálogo.'},404)
-     number=c.execute('SELECT COALESCE(MAX(number),2840)+1 FROM sales').fetchone()[0]; sid=str(uuid.uuid4()); c.execute('INSERT INTO sales(id,number,customer,channel,total,status) VALUES(?,?,?,?,?,?)',(sid,number,data.get('customer','Consumidor final'),data.get('channel','PDV'),total,'quote' if data.get('status')=='quote' else 'paid'))
+     number=c.execute('SELECT COALESCE(MAX(number),0)+1 FROM sales').fetchone()[0]; sid=str(uuid.uuid4()); c.execute('INSERT INTO sales(id,number,customer,channel,total,status) VALUES(?,?,?,?,?,?)',(sid,number,data.get('customer','Consumidor final'),data.get('channel','PDV'),total,'quote' if data.get('status')=='quote' else 'paid'))
      for p,q,price in normalized:
       c.execute('INSERT INTO sale_items(id,sale_id,product_id,description,quantity,unit_price) VALUES(?,?,?,?,?,?)',(str(uuid.uuid4()),sid,p['id'],p['name'],q,price))
       if data.get('status')!='quote':

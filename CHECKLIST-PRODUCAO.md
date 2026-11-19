@@ -11,7 +11,7 @@ Este documento separa o que já existe no projeto do que precisa ser decidido, i
 - Não existe emissão fiscal autorizada integrada à SEFAZ ou ao Emissor Nacional. O XML de compra pode ser importado, mas isso não equivale a emitir nota.
 - Marketplaces, banco/Open Finance, WhatsApp/SMS, assinatura digital, e-mail transacional e cobrança recorrente não estão conectados.
 - As alegações de venda offline precisam de implementação e validação próprias; o sistema hospedado depende do servidor e do banco online.
-- O projeto ainda não tem recuperação de senha, confirmação de e-mail, limite de tentativas, backup/restore automatizado ou permissões granulares por módulo.
+- O fluxo de redefinição de senha por e-mail já existe, mas depende de SMTP configurado no servidor. Há bloqueio temporário após cinco tentativas em 15 minutos; confirmação de e-mail, backup/restore automatizado e permissões granulares por módulo ainda faltam.
 
 ## Fase 1 — piloto interno da sua empresa
 
@@ -20,7 +20,7 @@ Para testar venda, cadastro e estoque sem emissão fiscal ou cobrança online:
 - [ ] Publicar a versão atualizada no Shard Cloud e confirmar HTTPS, domínio e inicialização sem erros.
 - [ ] Confirmar armazenamento persistente para o SQLite e para a pasta `tenants/`; reiniciar a aplicação e verificar se os registros continuam lá.
 - [ ] Criar o login administrativo usando variáveis secretas do servidor. Não colocar senha no Git, ZIP, código ou conversa.
-- [ ] Abrir `/api/health` e confirmar `ok: true`, `superadmin_configured: true` e o e-mail administrativo esperado. Não publicar a resposta se ela revelar informação operacional.
+- [ ] Abrir `/api/health` e confirmar `ok: true` e `superadmin_configured: true`. O diagnóstico não expõe e-mail administrativo nem caminho do banco; use o endereço digitado no login.
 - [ ] Cadastrar produtos reais, saldo inicial, preço, custo, clientes e usuários da equipe.
 - [ ] Fazer venda de teste, conferir total, baixa de estoque, relatório e acesso de cada usuário.
 - [ ] Fazer uma cópia do banco e testar restauração antes de inserir dados importantes.
@@ -33,7 +33,7 @@ Para testar venda, cadastro e estoque sem emissão fiscal ou cobrança online:
 - [ ] Definir backup automático e retenção (diário, cópia fora da VPS e política de recuperação); testar restauração.
 - [ ] Confirmar persistência e capacidade de armazenamento da hospedagem; avaliar PostgreSQL gerenciado se houver vários clientes ou uso concorrente significativo.
 - [ ] HTTPS obrigatório, cookies seguros, proteção de sessão e segredo de aplicação gerado no servidor.
-- [ ] Implementar recuperação de senha e confirmação de e-mail; limite de tentativas e proteção contra abuso.
+- [ ] Configurar SMTP e validar o link de recuperação de senha em produção; implementar confirmação de e-mail e ampliar a proteção contra abuso.
 - [ ] Revisar isolamento entre empresas em todas as rotas e consultas; impedir que uma empresa leia ou altere dados de outra.
 - [ ] Implementar permissões reais por perfil e módulo; hoje os perfis são básicos.
 - [ ] Logs de erro, alertas, monitoramento, rotina de atualização e procedimento de indisponibilidade.
