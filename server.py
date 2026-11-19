@@ -3,7 +3,9 @@ from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
 import json, sqlite3, uuid, os, threading, hashlib, secrets, hmac
 
-ROOT=Path(__file__).parent.resolve(); DB=Path(os.environ.get('NEXOFLOW_DB',ROOT/'nexoflow.sqlite3')); lock=threading.Lock()
+ROOT=Path(__file__).parent.resolve()
+DEFAULT_DB_DIR=Path('/app') if os.environ.get('SHARD_CLOUD') or Path('/app').is_dir() else ROOT
+DB=Path(os.environ.get('NEXOFLOW_DB',DEFAULT_DB_DIR/'nexoflow.sqlite3')); DB.parent.mkdir(parents=True,exist_ok=True); lock=threading.Lock()
 def db():
  c=sqlite3.connect(DB,timeout=10); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def open_tenant_db(path):
