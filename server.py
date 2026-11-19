@@ -26,8 +26,12 @@ def init():
   legacy=c.execute("SELECT id FROM users WHERE role IN ('Administrador','Administradora') ORDER BY created_at LIMIT 1").fetchone()
   if legacy and not c.execute("SELECT 1 FROM users WHERE role='Superadmin'").fetchone():c.execute("UPDATE users SET role='Superadmin' WHERE id=?",(legacy['id'],))
   admin_email=os.environ.get('NEXOFLOW_SUPERADMIN_EMAIL','').strip().lower();admin_password=os.environ.get('NEXOFLOW_SUPERADMIN_PASSWORD','')
-  if admin_email and admin_password and len(admin_password)>=12 and not c.execute("SELECT 1 FROM users WHERE role='Superadmin'").fetchone():
-   sid=str(uuid.uuid4());salt=secrets.token_hex(16);digest=hashlib.pbkdf2_hmac('sha256',admin_password.encode(),salt.encode(),240000).hex();c.execute("INSERT OR IGNORE INTO users(id,name,email,password_hash,role,tenant_id) VALUES(?,?,?,?,?,?)",(sid,'Administrador da Plataforma',admin_email,f'pbkdf2_sha256${salt}${digest}','Superadmin','tenant-main'));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),sid,admin_email,'Superadmin configurado no servidor'))
+  if admin_email and admin_password and len(admin_password)>=12:
+   superadmin=c.execute("SELECT id,email FROM users WHERE role='Superadmin' ORDER BY created_at LIMIT 1").fetchone()
+   if not superadmin:
+    sid=str(uuid.uuid4());salt=secrets.token_hex(16);digest=hashlib.pbkdf2_hmac('sha256',admin_password.encode(),salt.encode(),240000).hex();c.execute("INSERT OR IGNORE INTO users(id,name,email,password_hash,role,tenant_id) VALUES(?,?,?,?,?,?)",(sid,'Administrador da Plataforma',admin_email,f'pbkdf2_sha256${salt}${digest}','Superadmin','tenant-main'));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),sid,admin_email,'Superadmin configurado no servidor'))
+   elif superadmin['email'].lower()!=admin_email and not c.execute('SELECT 1 FROM users WHERE email=?',(admin_email,)).fetchone():
+    c.execute("UPDATE users SET email=? WHERE id=?",(admin_email,superadmin['id']))
   existing={row['name'] for row in c.execute('PRAGMA table_info(products)').fetchall()}
   for column,definition in [('barcode',"TEXT DEFAULT ''"),('variant',"TEXT DEFAULT ''"),('lot',"TEXT DEFAULT ''"),('expiry_date',"TEXT DEFAULT ''")]:
    if column not in existing:c.execute(f'ALTER TABLE products ADD COLUMN {column} {definition}')
@@ -70,7 +74,10 @@ class Handler(SimpleHTTPRequestHandler):
  def do_OPTIONS(self): self.send_response(204); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Access-Control-Allow-Methods','GET,POST,PUT,DELETE,OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type'); self.end_headers()
  def do_GET(self):
   url=urlparse(self.path); path=unquote(url.path)
-  if path=='/api/health': return self.send_json({'ok':True,'database':'SQLite','app':'NexoFlow'})
+  if path=='/api/health':
+   with db() as c:
+    admin=c.execute("SELECT email FROM users WHERE role='Superadmin' ORDER BY created_at LIMIT 1").fetchone()
+    return self.send_json({'ok':True,'database':'SQLite','app':'NexoFlow','superadmin_configured':bool(admin),'superadmin_email':admin['email'] if admin else None,'database_path':str(DB)})
   if path in ('/admin','/admin.html'):
    with db() as c:
     if not self.current_superadmin(c):self.send_response(302);self.send_header('Location','/login.html?next=admin');self.end_headers();return
