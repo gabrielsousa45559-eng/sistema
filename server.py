@@ -1,14 +1,14 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, unquote, parse_qs
-import json, sqlite3, uuid, os, threading
+import json, sqlite3, uuid, os, threading, hashlib, secrets, hmac
 
-ROOT=Path(__file__).parent.resolve(); DB=ROOT/'nexoflow.sqlite3'; lock=threading.Lock()
+ROOT=Path(__file__).parent.resolve(); DB=Path(os.environ.get('NEXOFLOW_DB',ROOT/'nexoflow.sqlite3')); lock=threading.Lock()
 def db():
  c=sqlite3.connect(DB,timeout=10); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 def init():
  with db() as c:
-  c.executescript('''CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,sku TEXT UNIQUE NOT NULL,name TEXT NOT NULL,category TEXT DEFAULT '',price REAL NOT NULL DEFAULT 0,cost REAL NOT NULL DEFAULT 0,stock REAL NOT NULL DEFAULT 0,min_stock REAL NOT NULL DEFAULT 0,barcode TEXT DEFAULT '',variant TEXT DEFAULT '',lot TEXT DEFAULT '',expiry_date TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT DEFAULT '',phone TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sales(id TEXT PRIMARY KEY,number INTEGER UNIQUE NOT NULL,customer TEXT DEFAULT '',channel TEXT DEFAULT 'PDV',total REAL NOT NULL,status TEXT DEFAULT 'paid',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sale_items(id TEXT PRIMARY KEY,sale_id TEXT NOT NULL REFERENCES sales(id),product_id TEXT REFERENCES products(id),description TEXT NOT NULL,quantity REAL NOT NULL,unit_price REAL NOT NULL); CREATE TABLE IF NOT EXISTS movements(id TEXT PRIMARY KEY,product_id TEXT NOT NULL REFERENCES products(id),kind TEXT NOT NULL,quantity REAL NOT NULL,note TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS finance(id TEXT PRIMARY KEY,description TEXT NOT NULL,kind TEXT NOT NULL,due_date TEXT DEFAULT '',category TEXT DEFAULT '',amount REAL NOT NULL,status TEXT DEFAULT 'open',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS xml_imports(id TEXT PRIMARY KEY,filename TEXT NOT NULL,supplier TEXT DEFAULT '',invoice_number TEXT DEFAULT '',total REAL DEFAULT 0,payload TEXT NOT NULL,status TEXT DEFAULT 'review',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,status TEXT DEFAULT 'open',payload TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS locations(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL); CREATE TABLE IF NOT EXISTS product_locations(product_id TEXT NOT NULL REFERENCES products(id),location_id TEXT NOT NULL REFERENCES locations(id),quantity REAL NOT NULL DEFAULT 0,PRIMARY KEY(product_id,location_id));''')
+  c.executescript('''CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,sku TEXT UNIQUE NOT NULL,name TEXT NOT NULL,category TEXT DEFAULT '',price REAL NOT NULL DEFAULT 0,cost REAL NOT NULL DEFAULT 0,stock REAL NOT NULL DEFAULT 0,min_stock REAL NOT NULL DEFAULT 0,barcode TEXT DEFAULT '',variant TEXT DEFAULT '',lot TEXT DEFAULT '',expiry_date TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS customers(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT DEFAULT '',phone TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sales(id TEXT PRIMARY KEY,number INTEGER UNIQUE NOT NULL,customer TEXT DEFAULT '',channel TEXT DEFAULT 'PDV',total REAL NOT NULL,status TEXT DEFAULT 'paid',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sale_items(id TEXT PRIMARY KEY,sale_id TEXT NOT NULL REFERENCES sales(id),product_id TEXT REFERENCES products(id),description TEXT NOT NULL,quantity REAL NOT NULL,unit_price REAL NOT NULL); CREATE TABLE IF NOT EXISTS movements(id TEXT PRIMARY KEY,product_id TEXT NOT NULL REFERENCES products(id),kind TEXT NOT NULL,quantity REAL NOT NULL,note TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS finance(id TEXT PRIMARY KEY,description TEXT NOT NULL,kind TEXT NOT NULL,due_date TEXT DEFAULT '',category TEXT DEFAULT '',amount REAL NOT NULL,status TEXT DEFAULT 'open',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS xml_imports(id TEXT PRIMARY KEY,filename TEXT NOT NULL,supplier TEXT DEFAULT '',invoice_number TEXT DEFAULT '',total REAL DEFAULT 0,payload TEXT NOT NULL,status TEXT DEFAULT 'review',created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,status TEXT DEFAULT 'open',payload TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS locations(id TEXT PRIMARY KEY,name TEXT UNIQUE NOT NULL); CREATE TABLE IF NOT EXISTS product_locations(product_id TEXT NOT NULL REFERENCES products(id),location_id TEXT NOT NULL REFERENCES locations(id),quantity REAL NOT NULL DEFAULT 0,PRIMARY KEY(product_id,location_id)); CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'Operador',status TEXT NOT NULL DEFAULT 'Ativo',last_access TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS access_logs(id TEXT PRIMARY KEY,user_id TEXT,email TEXT NOT NULL,event TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),expires_at TEXT NOT NULL);''')
   existing={row['name'] for row in c.execute('PRAGMA table_info(products)').fetchall()}
   for column,definition in [('barcode',"TEXT DEFAULT ''"),('variant',"TEXT DEFAULT ''"),('lot',"TEXT DEFAULT ''"),('expiry_date',"TEXT DEFAULT ''")]:
    if column not in existing:c.execute(f'ALTER TABLE products ADD COLUMN {column} {definition}')
@@ -19,8 +19,18 @@ def init():
 class Handler(SimpleHTTPRequestHandler):
  def __init__(self,*a,**kw): super().__init__(*a,directory=str(ROOT),**kw)
  def log_message(self,*a): pass
- def send_json(self,obj,status=200):
-  body=json.dumps(obj,ensure_ascii=False).encode(); self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.send_header('Access-Control-Allow-Origin','*'); self.end_headers(); self.wfile.write(body)
+ def send_json(self,obj,status=200,cookie=None):
+  body=json.dumps(obj,ensure_ascii=False).encode(); self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.send_header('Access-Control-Allow-Origin','*')
+  if cookie:self.send_header('Set-Cookie',cookie)
+  self.end_headers(); self.wfile.write(body)
+ def current_user(self,c):
+  from http.cookies import SimpleCookie
+  jar=SimpleCookie(); jar.load(self.headers.get('Cookie','')); morsel=jar.get('nf_session')
+  if not morsel:return None
+  return c.execute("SELECT u.id,u.name,u.email,u.role FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>CURRENT_TIMESTAMP AND u.status='Ativo'",(morsel.value,)).fetchone()
+ def current_admin(self,c):
+  user=self.current_user(c)
+  return user if user and user['role'] in ('Administrador','Administradora') else None
  def read_json(self): return json.loads(self.rfile.read(int(self.headers.get('Content-Length',0)) or 0) or b'{}')
  def do_OPTIONS(self): self.send_response(204); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Access-Control-Allow-Methods','GET,POST,PUT,DELETE,OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type'); self.end_headers()
  def do_GET(self):
@@ -28,8 +38,19 @@ class Handler(SimpleHTTPRequestHandler):
   if path=='/api/health': return self.send_json({'ok':True,'database':'SQLite','app':'NexoFlow'})
   if path.startswith('/api/'):
    with db() as c:
+    has_admin=bool(c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0])
+    if has_admin and path not in ('/api/health','/api/admin-state','/api/auth/login') and not self.current_user(c) and path not in ('/api/users','/api/access-logs'):
+     return self.send_json({'error':'Sua sessão expirou. Entre novamente para continuar.'},401)
+    if path=='/api/admin-state':return self.send_json({'has_admin':bool(c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0])})
     routes={'/api/products':'SELECT * FROM products ORDER BY name','/api/sales':'SELECT * FROM sales ORDER BY number DESC LIMIT 100','/api/finance':'SELECT * FROM finance ORDER BY due_date','/api/movements':'SELECT m.*,p.name product FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.created_at DESC LIMIT 100','/api/xml':'SELECT id,filename,supplier,invoice_number,total,status,created_at FROM xml_imports ORDER BY created_at DESC'}
     if path=='/api/locations':return self.send_json([dict(x) for x in c.execute('SELECT * FROM locations ORDER BY name').fetchall()])
+    if path=='/api/users':
+     if c.execute('SELECT COUNT(*) FROM users WHERE role IN (\'Administrador\',\'Administradora\')').fetchone()[0] and not self.current_admin(c):return self.send_json({'error':'Faça login como administrador para consultar os acessos.'},401)
+     return self.send_json([dict(x) for x in c.execute('SELECT id,name,email,role,status,last_access,created_at FROM users ORDER BY created_at DESC').fetchall()])
+    if path=='/api/access-logs':
+     if not c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0]:return self.send_json([])
+     if not self.current_admin(c):return self.send_json({'error':'Faça login como administrador para consultar os acessos.'},401)
+     return self.send_json([dict(x) for x in c.execute('SELECT id,email,event,created_at FROM access_logs ORDER BY created_at DESC LIMIT 100').fetchall()])
     if path=='/api/stock-by-location':return self.send_json([dict(x) for x in c.execute('SELECT p.name product,l.name location,pl.quantity FROM product_locations pl JOIN products p ON p.id=pl.product_id JOIN locations l ON l.id=pl.location_id ORDER BY p.name,l.name').fetchall()])
     if path=='/api/operations':
      kind=parse_qs(url.query).get('kind',[''])[0]; rows=c.execute('SELECT * FROM operations WHERE kind=? ORDER BY created_at DESC',(kind,)).fetchall() if kind else c.execute('SELECT * FROM operations ORDER BY created_at DESC').fetchall(); return self.send_json([dict(x) | {'payload':json.loads(x['payload'])} for x in rows])
@@ -39,12 +60,44 @@ class Handler(SimpleHTTPRequestHandler):
     if path.startswith('/api/settings/'): 
      row=c.execute('SELECT value FROM settings WHERE key=?',(path.rsplit('/',1)[-1],)).fetchone(); return self.send_json(json.loads(row['value']) if row else {})
    return self.send_json({'error':'Rota não encontrada'},404)
-  if path=='/': self.path='/index.html'
+  if path=='/': path='/index.html'; self.path='/index.html'
+  if path=='/index.html':
+   with db() as c:
+    has_admin=bool(c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0])
+    if has_admin and not self.current_user(c):self.send_response(302);self.send_header('Location','/login.html');self.end_headers();return
   return super().do_GET()
  def do_POST(self):
   path=unquote(urlparse(self.path).path); data=self.read_json()
   try:
    with lock,db() as c:
+    has_admin=bool(c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0])
+    if has_admin and path not in ('/api/auth/login','/api/auth/logout') and not self.current_user(c) and path!='/api/users':
+     return self.send_json({'error':'Sua sessão expirou. Entre novamente para continuar.'},401)
+    if path=='/api/auth/logout':
+     from http.cookies import SimpleCookie
+     jar=SimpleCookie();jar.load(self.headers.get('Cookie',''));m=jar.get('nf_session')
+     if m:c.execute('DELETE FROM sessions WHERE token=?',(m.value,))
+     return self.send_json({'ok':True},cookie='nf_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0')
+    if path=='/api/auth/login':
+     email=(data.get('email') or '').strip().lower(); password=data.get('password') or ''; user=c.execute('SELECT * FROM users WHERE email=?',(email,)).fetchone()
+     if not user or user['status']!='Ativo':return self.send_json({'error':'Acesso não encontrado ou suspenso.'},401)
+     try:_,salt,expected=user['password_hash'].split('$',2)
+     except ValueError:return self.send_json({'error':'Credencial inválida.'},401)
+     actual=hashlib.pbkdf2_hmac('sha256',password.encode(),salt.encode(),240000).hex()
+     if not hmac.compare_digest(actual,expected):return self.send_json({'error':'E-mail ou senha incorretos.'},401)
+     token=secrets.token_urlsafe(32);c.execute("INSERT INTO sessions(token,user_id,expires_at) VALUES(?,?,datetime('now','+12 hours'))",(token,user['id']));c.execute("UPDATE users SET last_access=CURRENT_TIMESTAMP WHERE id=?",(user['id'],));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),user['id'],email,'Login realizado'))
+     return self.send_json({'ok':True,'user':{'name':user['name'],'email':email,'role':user['role']}},cookie=f'nf_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200')
+    if path=='/api/users':
+     name=(data.get('name') or '').strip(); email=(data.get('email') or '').strip().lower(); password=data.get('password') or ''; role=(data.get('role') or 'Operador').strip()
+     if not name or not email or '@' not in email:return self.send_json({'error':'Informe nome e um e-mail válido.'},400)
+     if len(password)<8:return self.send_json({'error':'A senha inicial precisa ter pelo menos 8 caracteres.'},400)
+     has_admin=bool(c.execute("SELECT COUNT(*) FROM users WHERE role IN ('Administrador','Administradora')").fetchone()[0])
+     if has_admin and not self.current_admin(c):return self.send_json({'error':'Entre como administrador para criar acessos.'},401)
+     if not has_admin:role='Administrador'
+     salt=secrets.token_hex(16); digest=hashlib.pbkdf2_hmac('sha256',password.encode(),salt.encode(),240000).hex(); uid=str(uuid.uuid4())
+     c.execute('INSERT INTO users(id,name,email,password_hash,role) VALUES(?,?,?,?,?)',(uid,name,email,f'pbkdf2_sha256${salt}${digest}',role))
+     c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),uid,email,'Acesso criado'))
+     return self.send_json({'id':uid,'name':name,'email':email,'role':role,'status':'Ativo'},201)
     if path=='/api/operations':
      kind=(data.get('kind') or 'note').strip(); title=(data.get('title') or '').strip()
      if not title:return self.send_json({'error':'Informe um título para o registro.'},400)
@@ -130,6 +183,16 @@ class Handler(SimpleHTTPRequestHandler):
   except (ValueError,TypeError) as ex:return self.send_json({'error':'Confira os valores informados.'},400)
  def do_PUT(self):
   path=unquote(urlparse(self.path).path); data=self.read_json()
+  if path.startswith('/api/users/'):
+   status=data.get('status','Suspenso')
+   if status not in ('Ativo','Suspenso'):return self.send_json({'error':'Status de acesso inválido.'},400)
+   uid=path.rsplit('/',1)[-1]
+   with db() as c:
+    if not self.current_admin(c):return self.send_json({'error':'Entre como administrador para alterar acessos.'},401)
+    user=c.execute('SELECT id,email FROM users WHERE id=?',(uid,)).fetchone()
+    if not user:return self.send_json({'error':'Acesso não encontrado.'},404)
+    c.execute('UPDATE users SET status=? WHERE id=?',(status,uid));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),uid,user['email'],'Acesso '+('ativado' if status=='Ativo' else 'suspenso')))
+    return self.send_json({'ok':True,'status':status})
   if path.startswith('/api/operations/'):
    data=self.read_json()
    with db() as c:c.execute('UPDATE operations SET status=? WHERE id=?',(data.get('status','done'),path.rsplit('/',1)[-1]));return self.send_json({'ok':True})
