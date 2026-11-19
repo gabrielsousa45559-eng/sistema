@@ -4,18 +4,20 @@ Protótipo de interface navegável para o NexoFlow, uma plataforma de gestão qu
 
 ## Abrir
 
-No Windows, execute `iniciar.bat`. O script inicia um servidor local e abre o NexoFlow no navegador. O backend usa Python 3 e SQLite integrados, sem instalar pacotes externos. Os dados ficam em `nexoflow.sqlite3` nesta pasta. Se abrir `index.html` diretamente, o protótipo usa o armazenamento local daquele navegador, inclusive sem conexão; para criar usuários com senha protegida e consultar logins, use o servidor. A fonte DM Sans/Manrope é carregada do Google Fonts quando há conexão.
+No Windows, execute `iniciar.bat`. O script inicia um servidor local e abre a página comercial do NexoFlow. O backend usa Python 3 e SQLite integrados, sem instalar pacotes externos. Os dados centrais ficam em `nexoflow.sqlite3`; novas empresas recebem um arquivo SQLite separado em `tenants/`. Se abrir `index.html` diretamente, o protótipo usa o armazenamento local daquele navegador, mas criação de contas e login precisam do servidor.
 
-A página comercial está em `sales-page.html`. O link **Página comercial** na navegação e no rodapé abre a apresentação pública do produto. O link **Já uso o NexoFlow** abre `login.html`.
+A página comercial está em `sales-page.html`, com preços demonstrativos e inscrição. **Já uso o NexoFlow** abre `login.html`; **Criar conta** abre `signup.html`. O cadastro escolhe um plano e cria uma empresa isolada. Os preços não têm cobrança automática integrada.
 
-Na primeira execução, abra **Configurações → Usuários e permissões** e cadastre o primeiro acesso; esse usuário será o administrador inicial. Depois, o sistema pede login e a área administrativa fica restrita a administradores. Os logins da equipe aparecem no histórico de acessos.
+Cada empresa cria seu administrador pelo cadastro público; esse administrador cria acessos da equipe em **Configurações → Usuários e permissões**. Para controlar toda a plataforma, configure `NEXOFLOW_SUPERADMIN_EMAIL` e `NEXOFLOW_SUPERADMIN_PASSWORD` (mínimo de 12 caracteres) no servidor antes da primeira inicialização. O superadmin entra em `/admin.html` para controlar empresas, contas, planos, preços e atividade.
 
 ## Interações disponíveis
 
 - Navegação entre visão geral, vendas, PDV, estoque, notas/XML, financeiro, fiscal, integrações, relatórios, funcionalidades e configurações.
 - Catálogo agrupado com os módulos e funções informados: vendas/PDV, financeiro/cobrança, notas fiscais, estoque/compras, serviços/contratos e gestão/plataforma.
 - Os quatro atalhos de configurações abrem formulários próprios e persistem no SQLite.
-- A área **Usuários e permissões** cria o primeiro administrador, cadastra usuários, permite ativar/suspender contas e registra criação, alterações de acesso e logins. As senhas são armazenadas com PBKDF2-HMAC-SHA256; sessões expiram após 12 horas. O sistema é servido apenas em `127.0.0.1`.
+- Cadastro de empresa e login por senha, com banco SQLite separado por cliente. Senhas usam PBKDF2-HMAC-SHA256 e sessões expiram em 12 horas.
+- A área **Usuários e permissões** cria acessos da equipe da empresa, permite ativar/suspender contas e registra alterações e logins.
+- Painel separado de **Superadmin** para controlar empresas, usuários globais, planos, preços e logs. O servidor escuta em `127.0.0.1`; na VPS, use proxy HTTPS reverso.
 - O botão **Novo pedido** abre o formulário de venda/orçamento. Itens podem ser adicionados; finalizar venda confere saldo e baixa o estoque, enquanto salvar como orçamento preserva o saldo.
 - Produtos guardam SKU, código de barras, variação, lote, validade, preço, custo, saldo mínimo e quantidade. Movimentos, vendas e lançamentos são persistidos no SQLite quando o servidor está ativo.
 - O saldo é acompanhado por loja. Transferências atualizam as quantidades de origem e destino sem alterar o total da empresa.
@@ -30,4 +32,4 @@ Na primeira execução, abra **Configurações → Usuários e permissões** e c
 
 ## Estado do projeto
 
-O app local grava vendas, itens, estoque, movimentos, transferências, cotações, operações, lançamentos financeiros, importações XML, configurações e usuários. A autenticação protege o acesso servido localmente; os perfis são cadastrados, mas as permissões detalhadas por módulo ainda não são aplicadas. Não há acesso remoto. Emissão fiscal autorizada, assinatura digital com validade jurídica, pagamentos, Open Finance, envio por WhatsApp/SMS, sincronização de marketplaces e geração automática recorrente exigem provedores/credenciais externos e não são afirmados como conectados.
+Ainda faltam cobrança automática, confirmação de e-mail, recuperação de senha, limite de tentativas e permissões detalhadas por módulo. Os preços são demonstrativos. Emissão fiscal autorizada, assinatura digital com validade jurídica, pagamentos, Open Finance, WhatsApp/SMS, marketplaces e rotinas recorrentes precisam de provedores/credenciais externos.
