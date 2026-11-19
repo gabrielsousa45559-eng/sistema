@@ -16,7 +16,7 @@ Envie o arquivo `sistema-shardcloud.zip` como uma aplicação **Python** (não N
 
 A página comercial está em `sales-page.html`, com preços demonstrativos e inscrição. **Já uso o NexoFlow** abre `login.html`; **Criar conta** abre `signup.html`. O cadastro escolhe um plano e cria uma empresa isolada. Os preços não têm cobrança automática integrada.
 
-Cada empresa cria seu administrador pelo cadastro público; esse administrador cria acessos da equipe em **Configurações → Usuários e permissões**. Para controlar toda a plataforma, configure `NEXOFLOW_SUPERADMIN_EMAIL` e `NEXOFLOW_SUPERADMIN_PASSWORD` (mínimo de 12 caracteres) no servidor antes da primeira inicialização. O superadmin entra em `/admin.html` para controlar empresas, contas, planos, preços e atividade.
+Cada empresa cria seu administrador pelo cadastro público; esse administrador cria acessos da equipe em **Configurações → Usuários e permissões**. Para controlar toda a plataforma, configure `NEXOFLOW_SUPERADMIN_EMAIL` e `NEXOFLOW_SUPERADMIN_PASSWORD` (mínimo de 8 caracteres) no servidor antes da inicialização. O superadmin entra em `/admin.html` para controlar empresas, contas, planos, preços e atividade.
 
 ## Interações disponíveis
 

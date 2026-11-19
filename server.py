@@ -28,7 +28,7 @@ def init():
   legacy=c.execute("SELECT id FROM users WHERE role IN ('Administrador','Administradora') ORDER BY created_at LIMIT 1").fetchone()
   if legacy and not c.execute("SELECT 1 FROM users WHERE role='Superadmin'").fetchone():c.execute("UPDATE users SET role='Superadmin' WHERE id=?",(legacy['id'],))
   admin_email=os.environ.get('NEXOFLOW_SUPERADMIN_EMAIL','').strip().lower();admin_password=os.environ.get('NEXOFLOW_SUPERADMIN_PASSWORD','')
-  if admin_email and admin_password and len(admin_password)>=12:
+  if admin_email and admin_password and len(admin_password)>=8:
    superadmin=c.execute("SELECT id,email FROM users WHERE role='Superadmin' ORDER BY created_at LIMIT 1").fetchone()
    if not superadmin:
     sid=str(uuid.uuid4());salt=secrets.token_hex(16);digest=hashlib.pbkdf2_hmac('sha256',admin_password.encode(),salt.encode(),240000).hex();c.execute("INSERT OR IGNORE INTO users(id,name,email,password_hash,role,tenant_id) VALUES(?,?,?,?,?,?)",(sid,'Administrador da Plataforma',admin_email,f'pbkdf2_sha256${salt}${digest}','Superadmin','tenant-main'));c.execute('INSERT INTO access_logs(id,user_id,email,event) VALUES(?,?,?,?)',(str(uuid.uuid4()),sid,admin_email,'Superadmin configurado no servidor'))
