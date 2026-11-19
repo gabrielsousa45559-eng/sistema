@@ -1,0 +1,6 @@
+nexoflow.sqlite3
+nexoflow.sqlite3-shm
+nexoflow.sqlite3-wal
+__pycache__/
+*.py[cod]
+.env
