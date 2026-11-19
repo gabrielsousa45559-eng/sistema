@@ -325,4 +325,4 @@ class Handler(SimpleHTTPRequestHandler):
    with self.request_db(path) as c:c.execute('DELETE FROM finance WHERE id=?',(path.rsplit('/',1)[-1],));return self.send_json({'ok':True})
   return self.send_json({'error':'Rota não encontrada'},404)
 if __name__=='__main__':
- init(); port=int(os.environ.get('PORT','8765')); print(f'NexoFlow disponível em http://127.0.0.1:{port}'); ThreadingHTTPServer(('127.0.0.1',port),Handler).serve_forever()
+ init(); port=int(os.environ.get('PORT','8765')); host=os.environ.get('HOST','127.0.0.1'); print(f'NexoFlow disponível em http://{host}:{port}'); ThreadingHTTPServer((host,port),Handler).serve_forever()

@@ -4,7 +4,15 @@ Protótipo de interface navegável para o NexoFlow, uma plataforma de gestão qu
 
 ## Abrir
 
-No Windows, execute `iniciar.bat`. O script inicia um servidor local e abre a página comercial do NexoFlow. O backend usa Python 3 e SQLite integrados, sem instalar pacotes externos. Os dados centrais ficam em `nexoflow.sqlite3`; novas empresas recebem um arquivo SQLite separado em `tenants/`. Se abrir `index.html` diretamente, o protótipo usa o armazenamento local daquele navegador, mas criação de contas e login precisam do servidor.
+No Windows, execute `iniciar.bat`. O script inicia o backend Python e abre a página comercial. O backend usa Python 3 e SQLite integrados, sem pacotes Python externos. Os dados centrais ficam em `nexoflow.sqlite3`; novas empresas recebem arquivos separados em `tenants/`. Criação de contas e login precisam do servidor.
+
+### Publicar em VPS / hospedagem Node
+
+Instale Python 3 no servidor e use `npm start` (ou `node server.js`) como comando de inicialização. O `server.js` detecta Python e inicia `server.py`; configure a variável `PORT` disponibilizada pela hospedagem. Não use `node server.py`, pois esse arquivo contém código Python. Configure `NEXOFLOW_SUPERADMIN_EMAIL` e `NEXOFLOW_SUPERADMIN_PASSWORD` no ambiente da VPS antes da primeira inicialização para criar o acesso global. Coloque o serviço atrás de HTTPS/reverse proxy e mantenha o arquivo SQLite em disco persistente.
+
+### Publicar no Shard Cloud
+
+Envie o arquivo `sistema-shardcloud.zip` como uma aplicação **Python** (não Node.js). O ZIP de deploy precisa conter `.shardcloud`, `requirements.txt` e `main.py`; esses arquivos já estão no projeto. O `.shardcloud` aponta para `main.py`, que escuta na porta 80. No formulário do Shard, escolha Python e não selecione `app.js` como arquivo principal. Cadastre `NEXOFLOW_SUPERADMIN_EMAIL` e `NEXOFLOW_SUPERADMIN_PASSWORD` nas variáveis da aplicação. O SQLite precisa ficar no armazenamento persistente `/app`.
 
 A página comercial está em `sales-page.html`, com preços demonstrativos e inscrição. **Já uso o NexoFlow** abre `login.html`; **Criar conta** abre `signup.html`. O cadastro escolhe um plano e cria uma empresa isolada. Os preços não têm cobrança automática integrada.
 
@@ -17,7 +25,7 @@ Cada empresa cria seu administrador pelo cadastro público; esse administrador c
 - Os quatro atalhos de configurações abrem formulários próprios e persistem no SQLite.
 - Cadastro de empresa e login por senha, com banco SQLite separado por cliente. Senhas usam PBKDF2-HMAC-SHA256 e sessões expiram em 12 horas.
 - A área **Usuários e permissões** cria acessos da equipe da empresa, permite ativar/suspender contas e registra alterações e logins.
-- Painel separado de **Superadmin** para controlar empresas, usuários globais, planos, preços e logs. O servidor escuta em `127.0.0.1`; na VPS, use proxy HTTPS reverso.
+- Painel separado de **Superadmin** para controlar empresas, usuários globais, planos, preços e logs. O `iniciar.bat` local usa `127.0.0.1`; o iniciador Node usa `0.0.0.0` e `PORT` para hospedagem, devendo ficar atrás de HTTPS/reverse proxy.
 - O botão **Novo pedido** abre o formulário de venda/orçamento. Itens podem ser adicionados; finalizar venda confere saldo e baixa o estoque, enquanto salvar como orçamento preserva o saldo.
 - Produtos guardam SKU, código de barras, variação, lote, validade, preço, custo, saldo mínimo e quantidade. Movimentos, vendas e lançamentos são persistidos no SQLite quando o servidor está ativo.
 - O saldo é acompanhado por loja. Transferências atualizam as quantidades de origem e destino sem alterar o total da empresa.

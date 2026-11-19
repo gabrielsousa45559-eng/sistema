@@ -1,0 +1,5 @@
+DISPLAY_NAME=NexoFlow
+DESCRIPTION=ERP para vendas, estoque, financeiro e servicos
+MAIN=main.py
+MEMORY=512
+VERSION=LATEST

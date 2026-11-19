@@ -1,6 +1,8 @@
 nexoflow.sqlite3
 nexoflow.sqlite3-shm
 nexoflow.sqlite3-wal
+tenants/*.sqlite3
+sistema-shardcloud.zip
 __pycache__/
 *.py[cod]
 .env
